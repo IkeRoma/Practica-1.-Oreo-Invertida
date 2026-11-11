@@ -1,0 +1,5 @@
+1) Copia server.env.example como server.env y client.env.example como client.env.
+2) server.env se usa exclusivamente en el equipo servidor.
+3) client.env se usa en cada computadora cliente.
+4) No compartas ni subas los archivos .env reales.
+5) El puerto inicial del servidor es TCP 3031 (rango asignado 3031-3040).
