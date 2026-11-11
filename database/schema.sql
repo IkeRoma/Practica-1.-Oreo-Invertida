@@ -96,3 +96,10 @@ BEGIN
     CREATE INDEX idx_direct_pair ON messages (scope, sender_id, recipient_id, created_at);
 END
 GO
+
+SELECT
+    local_net_address AS direccion_servidor,
+    local_tcp_port AS puerto,
+    client_net_address AS direccion_cliente
+FROM sys.dm_exec_connections
+WHERE session_id = @@SPID;
