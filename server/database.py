@@ -5,7 +5,7 @@ class Database:
     def __init__(self, config):
         self.pool = pooling.MySQLConnectionPool(
             pool_name="wasap_pool", pool_size=10, pool_reset_session=True,
-            host=config["DB_HOST"], port=int(config.get("DB_PORT", 3306)),
+            host=config["DB_HOST"], port=int(config.get("DB_PORT", 1433)),
             user=config["DB_USER"], password=config["DB_PASSWORD"],
             database=config["DB_NAME"], autocommit=False,
             connection_timeout=8
