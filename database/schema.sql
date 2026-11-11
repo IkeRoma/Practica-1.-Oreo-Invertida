@@ -1,60 +1,98 @@
-CREATE DATABASE IF NOT EXISTS wasap_db
-  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- 1. Crear la base de datos si no existe (Verificando en las vistas del sistema)
+IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'wasap_db')
+BEGIN
+    CREATE DATABASE wasap_db;
+END
+GO
+
 USE wasap_db;
+GO
 
-CREATE TABLE IF NOT EXISTS users (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  username VARCHAR(32) NOT NULL UNIQUE,
-  password_hash VARCHAR(255) NOT NULL,
-  display_name VARCHAR(64) NOT NULL,
-  avatar_path VARCHAR(512) NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
+-- 2. Tabla users
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'users')
+BEGIN
+    CREATE TABLE users (
+        id BIGINT IDENTITY(1,1) PRIMARY KEY,
+        username VARCHAR(32) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        display_name VARCHAR(64) NOT NULL,
+        avatar_path VARCHAR(512) NULL,
+        created_at DATETIME2 NOT NULL DEFAULT GETDATE()
+    );
+END
+GO
 
-CREATE TABLE IF NOT EXISTS groups_chat (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(80) NOT NULL,
-  owner_id BIGINT UNSIGNED NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (owner_id) REFERENCES users(id)
-) ENGINE=InnoDB;
+-- 3. Tabla groups_chat
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'groups_chat')
+BEGIN
+    CREATE TABLE groups_chat (
+        id BIGINT IDENTITY(1,1) PRIMARY KEY,
+        name VARCHAR(80) NOT NULL,
+        owner_id BIGINT NOT NULL,
+        created_at DATETIME2 NOT NULL DEFAULT GETDATE(),
+        FOREIGN KEY (owner_id) REFERENCES users(id)
+    );
+END
+GO
 
-CREATE TABLE IF NOT EXISTS group_members (
-  group_id BIGINT UNSIGNED NOT NULL,
-  user_id BIGINT UNSIGNED NOT NULL,
-  joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (group_id, user_id),
-  FOREIGN KEY (group_id) REFERENCES groups_chat(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB;
+-- 4. Tabla group_members
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'group_members')
+BEGIN
+    CREATE TABLE group_members (
+        group_id BIGINT NOT NULL,
+        user_id BIGINT NOT NULL,
+        joined_at DATETIME2 NOT NULL DEFAULT GETDATE(),
+        PRIMARY KEY (group_id, user_id),
+        FOREIGN KEY (group_id) REFERENCES groups_chat(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) -- Nota: En SQL Server se evita cascada múltiple en la misma tabla para prevenir rutas circulares, pero se mantiene la lógica básica.
+    );
+END
+GO
 
-CREATE TABLE IF NOT EXISTS channels (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(80) NOT NULL UNIQUE,
-  owner_id BIGINT UNSIGNED NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (owner_id) REFERENCES users(id)
-) ENGINE=InnoDB;
+-- 5. Tabla channels
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'channels')
+BEGIN
+    CREATE TABLE channels (
+        id BIGINT IDENTITY(1,1) PRIMARY KEY,
+        name VARCHAR(80) NOT NULL UNIQUE,
+        owner_id BIGINT NOT NULL,
+        created_at DATETIME2 NOT NULL DEFAULT GETDATE(),
+        FOREIGN KEY (owner_id) REFERENCES users(id)
+    );
+END
+GO
 
-CREATE TABLE IF NOT EXISTS channel_members (
-  channel_id BIGINT UNSIGNED NOT NULL,
-  user_id BIGINT UNSIGNED NOT NULL,
-  joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (channel_id, user_id),
-  FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB;
+-- 6. Tabla channel_members
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'channel_members')
+BEGIN
+    CREATE TABLE channel_members (
+        channel_id BIGINT NOT NULL,
+        user_id BIGINT NOT NULL,
+        joined_at DATETIME2 NOT NULL DEFAULT GETDATE(),
+        PRIMARY KEY (channel_id, user_id),
+        FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+END
+GO
 
-CREATE TABLE IF NOT EXISTS messages (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  sender_id BIGINT UNSIGNED NOT NULL,
-  scope ENUM('general','direct','group','channel') NOT NULL,
-  target_id BIGINT UNSIGNED NULL,
-  recipient_id BIGINT UNSIGNED NULL,
-  body TEXT NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_scope_target (scope, target_id, created_at),
-  INDEX idx_direct_pair (scope, sender_id, recipient_id, created_at),
-  FOREIGN KEY (sender_id) REFERENCES users(id),
-  FOREIGN KEY (recipient_id) REFERENCES users(id)
-) ENGINE=InnoDB;
+-- 7. Tabla messages
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'messages')
+BEGIN
+    CREATE TABLE messages (
+        id BIGINT IDENTITY(1,1) PRIMARY KEY,
+        sender_id BIGINT NOT NULL,
+        scope VARCHAR(20) NOT NULL CHECK (scope IN ('general','direct','group','channel')),
+        target_id BIGINT NULL,
+        recipient_id BIGINT NULL,
+        body VARCHAR(MAX) NOT NULL,
+        created_at DATETIME2 NOT NULL DEFAULT GETDATE(),
+        FOREIGN KEY (sender_id) REFERENCES users(id),
+        FOREIGN KEY (recipient_id) REFERENCES users(id)
+    );
+
+    -- Creación de índices equivalentes
+    CREATE INDEX idx_scope_target ON messages (scope, target_id, created_at);
+    CREATE INDEX idx_direct_pair ON messages (scope, sender_id, recipient_id, created_at);
+END
+GO
