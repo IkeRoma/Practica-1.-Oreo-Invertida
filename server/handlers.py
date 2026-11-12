@@ -40,16 +40,13 @@ class Handler:
                 password = str(msg.get("password", ""))
                 display = str(msg.get("display_name", "")).strip() or username
                 avatar = str(msg.get("avatar_path", "")).strip() or None
-                avatar_data = msg.get("avatar_data")
-                if avatar_data is not None and len(str(avatar_data)) > 1_500_000:
-                    raise ValueError("La fotografía supera el tamaño permitido (aprox. 1 MB).")
                 if not (3 <= len(username) <= 32) or not username.replace("_", "").isalnum():
                     raise ValueError("El usuario debe tener 3–32 caracteres alfanuméricos o guion bajo.")
-                if len(password) < 10 or not any(c.isupper() for c in password) or not any(c.islower() for c in password) or not any(c.isdigit() for c in password) or not any(not c.isalnum() for c in password):
-                    raise ValueError("La contraseña debe tener 10 caracteres e incluir mayúscula, minúscula, número y símbolo.")
+                if len(password) < 8:
+                    raise ValueError("La contraseña debe tener al menos 8 caracteres.")
                 if self.db.user_by_username(username):
                     raise ValueError("Ese nombre de usuario ya está registrado.")
-                self.db.create_user(username, hash_password(password), display[:64], avatar, avatar_data)
+                self.db.create_user(username, hash_password(password), display[:64], avatar)
                 self._reply(conn, rid, True, {"message": "Cuenta creada. Ya puedes iniciar sesión."})
                 return
 
@@ -61,72 +58,28 @@ class Handler:
                 token = secrets.token_urlsafe(32)
                 conn.auth_token = token
                 self.sessions[token] = row["id"]
-                device_token = str(msg.get("device_token", "")).strip()
-                if device_token:
-                    self.db.remember_device(row["id"], hashlib.sha256(device_token.encode()).hexdigest(),
-                                            str(msg.get("device_name", "Dispositivo"))[:100])
                 self.online.setdefault(row["id"], set()).add(conn)
                 self._reply(conn, rid, True, {"token": token, "user": {
                     "id": row["id"], "username": row["username"],
-                    "display_name": row["display_name"], "avatar_path": row.get("avatar_path"),
-                    "avatar_data": row.get("avatar_data")}})
+                    "display_name": row["display_name"], "avatar_path": row["avatar_path"]}})
                 self.broadcast({"event": "presence", "user_id": row["id"], "online": True})
                 return
 
-            if action == "password_change":
-                username = str(msg.get("username", "")).strip().lower()
-                current = str(msg.get("current_password", ""))
-                new_password = str(msg.get("new_password", ""))
-                row = self.db.user_by_username(username)
-                if not row or not verify_password(current, row["password_hash"]):
-                    raise ValueError("Usuario o contraseña actual incorrectos.")
-                if len(new_password) < 10 or not any(c.isupper() for c in new_password) or not any(c.islower() for c in new_password) or not any(c.isdigit() for c in new_password) or not any(not c.isalnum() for c in new_password):
-                    raise ValueError("La nueva contraseña debe tener 10 caracteres e incluir mayúscula, minúscula, número y símbolo.")
-                self.db.update_password(row["id"], hash_password(new_password))
-                self.db.revoke_user_devices(row["id"])
-                self._reply(conn, rid, True, {"message": "Contraseña actualizada. Inicia sesión nuevamente."})
-                return
-
-            if action == "device_resume":
-                device_token = str(msg.get("device_token", "")).strip()
-                if not device_token:
-                    raise ValueError("No hay un dispositivo recordado.")
-                token_hash = hashlib.sha256(device_token.encode()).hexdigest()
-                row = self.db.user_by_device_token(token_hash)
-                if not row:
-                    raise ValueError("La sesión guardada ya no es válida.")
-                token = secrets.token_urlsafe(32)
-                conn.auth_token = token
-                self.sessions[token] = row["id"]
-                self.online.setdefault(row["id"], set()).add(conn)
-                self.db.touch_device(token_hash)
-                self._reply(conn, rid, True, {"token": token, "user": {
-                    "id": row["id"], "username": row["username"],
-                    "display_name": row["display_name"], "avatar_path": row.get("avatar_path"),
-                    "avatar_data": row.get("avatar_data")}})
-                self.broadcast({"event": "presence", "user_id": row["id"], "online": True})
-                return
-
-            if action == "device_revoke":
-                device_token = str(msg.get("device_token", "")).strip()
-                if device_token:
-                    self.db.revoke_device(hashlib.sha256(device_token.encode()).hexdigest())
-                self._reply(conn, rid, True, {"revoked": True})
+            if action == "logout":
+                token = getattr(conn, "auth_token", None)
+                logout_uid = self.sessions.pop(token, None) if token else None
+                conn.auth_token = None
+                if logout_uid is not None:
+                    connections = self.online.get(logout_uid, set())
+                    connections.discard(conn)
+                    if not connections:
+                        self.online.pop(logout_uid, None)
+                        self.broadcast({"event": "presence", "user_id": logout_uid, "online": False})
+                self._reply(conn, rid, True, {"logged_out": True})
                 return
 
             user = self._user(conn)
             uid = user["id"]
-
-            if action == "profile_update":
-                display = str(msg.get("display_name", "")).strip()
-                if not display or len(display) > 64:
-                    raise ValueError("El nombre visible debe contener entre 1 y 64 caracteres.")
-                avatar_data = msg.get("avatar_data")
-                if avatar_data is not None and len(str(avatar_data)) > 1_500_000:
-                    raise ValueError("La fotografía supera el tamaño permitido (aprox. 1 MB).")
-                self.db.update_profile(uid, display, avatar_data)
-                self._reply(conn, rid, True, {"display_name": display, "avatar_data": avatar_data})
-                return
 
             if action == "users":
                 data = self.db.users()
@@ -192,6 +145,41 @@ class Handler:
                     raise ValueError("No perteneces a ese grupo.")
                 added = self.db.add_group_member(gid, str(msg.get("username", "")).strip().lower())
                 self._reply(conn, rid, True, {"username": added["username"]})
+
+            elif action == "contact_info":
+                contact_id = int(msg["user_id"])
+                contact = self.db.user_by_id(contact_id)
+                if not contact:
+                    raise ValueError("Contacto no encontrado.")
+                self._reply(conn, rid, True, contact)
+
+            elif action == "group_logout_all":
+                gid = int(msg["group_id"])
+                if not self.db.is_group_member(gid, uid):
+                    raise ValueError("No perteneces a ese grupo.")
+                members = self.db.group_members(gid)
+                group_name = self.db.group_name(gid)
+                closed_connections = 0
+                for member in members:
+                    member_id = member["id"]
+                    connections = list(self.online.get(member_id, set()))
+                    closed_connections += len(connections)
+                    for member_conn in connections:
+                        token = getattr(member_conn, "auth_token", None)
+                        if token:
+                            self.sessions.pop(token, None)
+                            member_conn.auth_token = None
+                        try:
+                            member_conn.send({
+                                "event": "force_logout",
+                                "reason": f"Tu sesión se cerró porque se ejecutó la acción de cierre grupal en «{group_name}»."
+                            })
+                        except Exception:
+                            pass
+                    self.online.pop(member_id, None)
+                    if connections:
+                        self.broadcast({"event": "presence", "user_id": member_id, "online": False})
+                self._reply(conn, rid, True, {"closed": closed_connections})
 
             elif action == "group_send":
                 gid = int(msg["group_id"])
