@@ -1,5 +1,13 @@
-/* Wasap - esquema para Microsoft SQL Server 2019/2022.
-   Ejecutar con una cuenta que tenga permisos para crear la base de datos y tablas. */
+USE master;
+GO
+
+-- Cambia la base de datos a modo de acceso único y desconecta a los usuarios de inmediato
+ALTER DATABASE wasap_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+GO
+
+DROP DATABASE wasap_db;
+GO
+
 IF DB_ID(N'wasap_db') IS NULL
 BEGIN
     CREATE DATABASE wasap_db;
