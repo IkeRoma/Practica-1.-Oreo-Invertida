@@ -1,105 +1,94 @@
--- 1. Crear la base de datos si no existe (Verificando en las vistas del sistema)
-IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'wasap_db')
+/* Wasap - esquema para Microsoft SQL Server 2019/2022.
+   Ejecutar con una cuenta que tenga permisos para crear la base de datos y tablas. */
+IF DB_ID(N'wasap_db') IS NULL
 BEGIN
     CREATE DATABASE wasap_db;
-END
+END;
 GO
 
 USE wasap_db;
 GO
 
--- 2. Tabla users
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'users')
+IF OBJECT_ID(N'dbo.users', N'U') IS NULL
 BEGIN
-    CREATE TABLE users (
-        id BIGINT IDENTITY(1,1) PRIMARY KEY,
-        username VARCHAR(32) NOT NULL UNIQUE,
-        password_hash VARCHAR(255) NOT NULL,
-        display_name VARCHAR(64) NOT NULL,
-        avatar_path VARCHAR(512) NULL,
-        created_at DATETIME2 NOT NULL DEFAULT GETDATE()
+    CREATE TABLE dbo.users (
+        id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_users PRIMARY KEY,
+        username NVARCHAR(32) NOT NULL,
+        password_hash NVARCHAR(255) NOT NULL,
+        display_name NVARCHAR(64) NOT NULL,
+        avatar_path NVARCHAR(512) NULL,
+        created_at DATETIME2(0) NOT NULL CONSTRAINT DF_users_created_at DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT UQ_users_username UNIQUE(username)
     );
-END
+END;
 GO
 
--- 3. Tabla groups_chat
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'groups_chat')
+IF OBJECT_ID(N'dbo.groups_chat', N'U') IS NULL
 BEGIN
-    CREATE TABLE groups_chat (
-        id BIGINT IDENTITY(1,1) PRIMARY KEY,
-        name VARCHAR(80) NOT NULL,
+    CREATE TABLE dbo.groups_chat (
+        id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_groups_chat PRIMARY KEY,
+        name NVARCHAR(80) NOT NULL,
         owner_id BIGINT NOT NULL,
-        created_at DATETIME2 NOT NULL DEFAULT GETDATE(),
-        FOREIGN KEY (owner_id) REFERENCES users(id)
+        created_at DATETIME2(0) NOT NULL CONSTRAINT DF_groups_chat_created_at DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT FK_groups_chat_owner FOREIGN KEY(owner_id) REFERENCES dbo.users(id)
     );
-END
+END;
 GO
 
--- 4. Tabla group_members
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'group_members')
+IF OBJECT_ID(N'dbo.group_members', N'U') IS NULL
 BEGIN
-    CREATE TABLE group_members (
+    CREATE TABLE dbo.group_members (
         group_id BIGINT NOT NULL,
         user_id BIGINT NOT NULL,
-        joined_at DATETIME2 NOT NULL DEFAULT GETDATE(),
-        PRIMARY KEY (group_id, user_id),
-        FOREIGN KEY (group_id) REFERENCES groups_chat(id) ON DELETE CASCADE,
-        FOREIGN KEY (user_id) REFERENCES users(id) -- Nota: En SQL Server se evita cascada múltiple en la misma tabla para prevenir rutas circulares, pero se mantiene la lógica básica.
+        joined_at DATETIME2(0) NOT NULL CONSTRAINT DF_group_members_joined_at DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_group_members PRIMARY KEY(group_id,user_id),
+        CONSTRAINT FK_group_members_group FOREIGN KEY(group_id) REFERENCES dbo.groups_chat(id) ON DELETE CASCADE,
+        CONSTRAINT FK_group_members_user FOREIGN KEY(user_id) REFERENCES dbo.users(id) ON DELETE CASCADE
     );
-END
+END;
 GO
 
--- 5. Tabla channels
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'channels')
+IF OBJECT_ID(N'dbo.channels', N'U') IS NULL
 BEGIN
-    CREATE TABLE channels (
-        id BIGINT IDENTITY(1,1) PRIMARY KEY,
-        name VARCHAR(80) NOT NULL UNIQUE,
+    CREATE TABLE dbo.channels (
+        id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_channels PRIMARY KEY,
+        name NVARCHAR(80) NOT NULL,
         owner_id BIGINT NOT NULL,
-        created_at DATETIME2 NOT NULL DEFAULT GETDATE(),
-        FOREIGN KEY (owner_id) REFERENCES users(id)
+        created_at DATETIME2(0) NOT NULL CONSTRAINT DF_channels_created_at DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT UQ_channels_name UNIQUE(name),
+        CONSTRAINT FK_channels_owner FOREIGN KEY(owner_id) REFERENCES dbo.users(id)
     );
-END
+END;
 GO
 
--- 6. Tabla channel_members
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'channel_members')
+IF OBJECT_ID(N'dbo.channel_members', N'U') IS NULL
 BEGIN
-    CREATE TABLE channel_members (
+    CREATE TABLE dbo.channel_members (
         channel_id BIGINT NOT NULL,
         user_id BIGINT NOT NULL,
-        joined_at DATETIME2 NOT NULL DEFAULT GETDATE(),
-        PRIMARY KEY (channel_id, user_id),
-        FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        joined_at DATETIME2(0) NOT NULL CONSTRAINT DF_channel_members_joined_at DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_channel_members PRIMARY KEY(channel_id,user_id),
+        CONSTRAINT FK_channel_members_channel FOREIGN KEY(channel_id) REFERENCES dbo.channels(id) ON DELETE CASCADE,
+        CONSTRAINT FK_channel_members_user FOREIGN KEY(user_id) REFERENCES dbo.users(id) ON DELETE CASCADE
     );
-END
+END;
 GO
 
--- 7. Tabla messages
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'messages')
+IF OBJECT_ID(N'dbo.messages', N'U') IS NULL
 BEGIN
-    CREATE TABLE messages (
-        id BIGINT IDENTITY(1,1) PRIMARY KEY,
+    CREATE TABLE dbo.messages (
+        id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_messages PRIMARY KEY,
         sender_id BIGINT NOT NULL,
-        scope VARCHAR(20) NOT NULL CHECK (scope IN ('general','direct','group','channel')),
+        scope VARCHAR(12) NOT NULL,
         target_id BIGINT NULL,
         recipient_id BIGINT NULL,
-        body VARCHAR(MAX) NOT NULL,
-        created_at DATETIME2 NOT NULL DEFAULT GETDATE(),
-        FOREIGN KEY (sender_id) REFERENCES users(id),
-        FOREIGN KEY (recipient_id) REFERENCES users(id)
+        body NVARCHAR(4000) NOT NULL,
+        created_at DATETIME2(0) NOT NULL CONSTRAINT DF_messages_created_at DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT CK_messages_scope CHECK(scope IN ('general','direct','group','channel')),
+        CONSTRAINT FK_messages_sender FOREIGN KEY(sender_id) REFERENCES dbo.users(id),
+        CONSTRAINT FK_messages_recipient FOREIGN KEY(recipient_id) REFERENCES dbo.users(id)
     );
-
-    -- Creación de índices equivalentes
-    CREATE INDEX idx_scope_target ON messages (scope, target_id, created_at);
-    CREATE INDEX idx_direct_pair ON messages (scope, sender_id, recipient_id, created_at);
-END
+    CREATE INDEX IX_messages_scope_target_created ON dbo.messages(scope,target_id,created_at,id);
+    CREATE INDEX IX_messages_direct_pair ON dbo.messages(scope,sender_id,recipient_id,created_at,id);
+END;
 GO
-
-SELECT
-    local_net_address AS direccion_servidor,
-    local_tcp_port AS puerto,
-    client_net_address AS direccion_cliente
-FROM sys.dm_exec_connections
-WHERE session_id = @@SPID;

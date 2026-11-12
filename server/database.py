@@ -1,31 +1,60 @@
-import mysql.connector
-from mysql.connector import pooling
+"""Acceso a datos para Microsoft SQL Server 2019/2022 mediante pyodbc."""
+from __future__ import annotations
+
+import pyodbc
+
 
 class Database:
-    def __init__(self, config):
-        self.pool = pooling.MySQLConnectionPool(
-            pool_name="wasap_pool", pool_size=10, pool_reset_session=True,
-            host=config["DB_HOST"], port=int(config.get("DB_PORT", 1433)),
-            user=config["DB_USER"], password=config["DB_PASSWORD"],
-            database=config["DB_NAME"], autocommit=False,
-            connection_timeout=8
+    def __init__(self, config: dict):
+        self.host = config["DB_HOST"]
+        self.port = int(config.get("DB_PORT", 1433))
+        self.name = config["DB_NAME"]
+        self.user = config["DB_USER"]
+        self.password = config["DB_PASSWORD"]
+        self.driver = config.get("DB_DRIVER", "ODBC Driver 18 for SQL Server")
+        self.encrypt = self._as_bool(config.get("DB_ENCRYPT", "yes"))
+        self.trust_cert = self._as_bool(config.get("DB_TRUST_SERVER_CERTIFICATE", "yes"))
+        self.timeout = int(config.get("DB_CONNECTION_TIMEOUT", 8))
+        self._connection_string = (
+            f"DRIVER={{{self.driver}}};"
+            f"SERVER=tcp:{self.host},{self.port};"
+            f"DATABASE={self.name};UID={self.user};PWD={self.password};"
+            f"Encrypt={'yes' if self.encrypt else 'no'};"
+            f"TrustServerCertificate={'yes' if self.trust_cert else 'no'};"
+            f"Connection Timeout={self.timeout};"
         )
 
+    @staticmethod
+    def _as_bool(value):
+        return str(value).strip().lower() in {"1", "true", "yes", "si", "sí", "on"}
+
+    def connect(self):
+        return pyodbc.connect(self._connection_string, autocommit=False, timeout=self.timeout)
+
+    @staticmethod
+    def _dict_row(cursor, row):
+        if row is None:
+            return None
+        columns = [column[0] for column in cursor.description]
+        return dict(zip(columns, row))
+
     def run(self, sql, params=(), fetch="none"):
-        conn = self.pool.get_connection()
+        """Ejecuta SQL con marcadores ?; fetch: none, one, all, lastrowid."""
+        conn = self.connect()
         try:
-            cur = conn.cursor(dictionary=True)
-            cur.execute(sql, params)
+            cursor = conn.cursor()
+            cursor.execute(sql, tuple(params))
             if fetch == "one":
-                result = cur.fetchone()
+                result = self._dict_row(cursor, cursor.fetchone())
             elif fetch == "all":
-                result = cur.fetchall()
+                result = [self._dict_row(cursor, row) for row in cursor.fetchall()]
             elif fetch == "lastrowid":
-                result = cur.lastrowid
+                row = cursor.fetchone()
+                result = int(row[0]) if row else None
             else:
                 result = None
             conn.commit()
-            cur.close()
+            cursor.close()
             return result
         except Exception:
             conn.rollback()
@@ -34,85 +63,134 @@ class Database:
             conn.close()
 
     def user_by_username(self, username):
-        return self.run("SELECT * FROM users WHERE username=%s", (username,), "one")
+        return self.run(
+            "SELECT id, username, password_hash, display_name, avatar_path "
+            "FROM dbo.users WHERE username = ?", (username,), "one")
 
     def user_by_id(self, user_id):
-        return self.run("SELECT id, username, display_name, avatar_path FROM users WHERE id=%s",
-                        (user_id,), "one")
+        return self.run(
+            "SELECT id, username, display_name, avatar_path FROM dbo.users WHERE id = ?",
+            (user_id,), "one")
 
     def create_user(self, username, password_hash, display_name, avatar_path=None):
         return self.run(
-            "INSERT INTO users(username,password_hash,display_name,avatar_path) VALUES(%s,%s,%s,%s)",
+            "INSERT INTO dbo.users(username,password_hash,display_name,avatar_path) "
+            "OUTPUT INSERTED.id VALUES(?,?,?,?)",
             (username, password_hash, display_name, avatar_path), "lastrowid")
 
     def users(self):
-        return self.run("SELECT id, username, display_name, avatar_path FROM users ORDER BY username", fetch="all")
+        return self.run(
+            "SELECT id, username, display_name, avatar_path FROM dbo.users ORDER BY username",
+            fetch="all")
 
     def save_message(self, sender, scope, body, target_id=None, recipient_id=None):
         return self.run(
-            "INSERT INTO messages(sender_id,scope,target_id,recipient_id,body) VALUES(%s,%s,%s,%s,%s)",
+            "INSERT INTO dbo.messages(sender_id,scope,target_id,recipient_id,body) "
+            "OUTPUT INSERTED.id VALUES(?,?,?,?,?)",
             (sender, scope, target_id, recipient_id, body), "lastrowid")
 
     def history(self, scope, target_id=None, user_id=None, limit=100):
+        limit = max(1, min(int(limit), 500))
         if scope == "direct":
-            sql = """SELECT m.id,m.body,m.scope,m.created_at,u.username,u.display_name
-                     FROM messages m JOIN users u ON u.id=m.sender_id
+            sql = """SELECT TOP (?) m.id,m.body,m.scope,m.created_at,
+                            u.username,u.display_name
+                     FROM dbo.messages AS m
+                     INNER JOIN dbo.users AS u ON u.id=m.sender_id
                      WHERE m.scope='direct' AND
-                     ((m.sender_id=%s AND m.recipient_id=%s) OR
-                      (m.sender_id=%s AND m.recipient_id=%s))
-                     ORDER BY m.id DESC LIMIT %s"""
-            rows = self.run(sql, (user_id,target_id,target_id,user_id,limit), "all")
+                       ((m.sender_id=? AND m.recipient_id=?) OR
+                        (m.sender_id=? AND m.recipient_id=?))
+                     ORDER BY m.id DESC"""
+            rows = self.run(sql, (limit, user_id, target_id, target_id, user_id), "all")
         else:
-            sql = """SELECT m.id,m.body,m.scope,m.created_at,u.username,u.display_name
-                     FROM messages m JOIN users u ON u.id=m.sender_id
-                     WHERE m.scope=%s AND (m.target_id <=> %s)
-                     ORDER BY m.id DESC LIMIT %s"""
-            rows = self.run(sql, (scope,target_id,limit), "all")
+            if target_id is None:
+                target_filter = "m.target_id IS NULL"
+                params = (limit, scope)
+            else:
+                target_filter = "m.target_id = ?"
+                params = (limit, scope, target_id)
+            sql = f"""SELECT TOP (?) m.id,m.body,m.scope,m.created_at,
+                             u.username,u.display_name
+                      FROM dbo.messages AS m
+                      INNER JOIN dbo.users AS u ON u.id=m.sender_id
+                      WHERE m.scope=? AND {target_filter}
+                      ORDER BY m.id DESC"""
+            rows = self.run(sql, params, "all")
         return list(reversed(rows or []))
 
     def create_group(self, name, owner_id):
-        gid = self.run("INSERT INTO groups_chat(name,owner_id) VALUES(%s,%s)", (name,owner_id), "lastrowid")
-        self.run("INSERT INTO group_members(group_id,user_id) VALUES(%s,%s)", (gid,owner_id))
-        return gid
+        conn = self.connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO dbo.groups_chat(name,owner_id) OUTPUT INSERTED.id VALUES(?,?)",
+                (name, owner_id))
+            gid = int(cur.fetchone()[0])
+            cur.execute("INSERT INTO dbo.group_members(group_id,user_id) VALUES(?,?)", (gid, owner_id))
+            conn.commit()
+            return gid
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def groups_for(self, user_id):
-        return self.run("""SELECT g.id,g.name,g.owner_id FROM groups_chat g
-                           JOIN group_members gm ON gm.group_id=g.id
-                           WHERE gm.user_id=%s ORDER BY g.name""", (user_id,), "all")
+        return self.run("""SELECT g.id,g.name,g.owner_id FROM dbo.groups_chat AS g
+                           INNER JOIN dbo.group_members AS gm ON gm.group_id=g.id
+                           WHERE gm.user_id=? ORDER BY g.name""", (user_id,), "all")
 
     def add_group_member(self, group_id, username):
         user = self.user_by_username(username)
         if not user:
             raise ValueError("No existe ese usuario.")
-        self.run("INSERT IGNORE INTO group_members(group_id,user_id) VALUES(%s,%s)",
-                 (group_id,user["id"]))
+        self.run("""IF NOT EXISTS (SELECT 1 FROM dbo.group_members WHERE group_id=? AND user_id=?)
+                    INSERT INTO dbo.group_members(group_id,user_id) VALUES(?,?)""",
+                 (group_id, user["id"], group_id, user["id"]))
         return user
 
     def is_group_member(self, group_id, user_id):
-        return bool(self.run("SELECT 1 AS ok FROM group_members WHERE group_id=%s AND user_id=%s",
-                             (group_id,user_id),"one"))
+        return bool(self.run(
+            "SELECT 1 AS ok FROM dbo.group_members WHERE group_id=? AND user_id=?",
+            (group_id, user_id), "one"))
 
     def group_members(self, group_id):
-        return self.run("""SELECT u.id,u.username,u.display_name FROM users u
-                           JOIN group_members gm ON gm.user_id=u.id WHERE gm.group_id=%s""",
-                        (group_id,), "all")
+        return self.run("""SELECT u.id,u.username,u.display_name FROM dbo.users AS u
+                           INNER JOIN dbo.group_members AS gm ON gm.user_id=u.id
+                           WHERE gm.group_id=?""", (group_id,), "all")
 
     def create_channel(self, name, owner_id):
-        cid = self.run("INSERT INTO channels(name,owner_id) VALUES(%s,%s)", (name,owner_id), "lastrowid")
-        self.run("INSERT INTO channel_members(channel_id,user_id) VALUES(%s,%s)", (cid,owner_id))
-        return cid
+        conn = self.connect()
+        try:
+            cur = conn.cursor()
+            cur.execute("INSERT INTO dbo.channels(name,owner_id) OUTPUT INSERTED.id VALUES(?,?)",
+                        (name, owner_id))
+            cid = int(cur.fetchone()[0])
+            cur.execute("INSERT INTO dbo.channel_members(channel_id,user_id) VALUES(?,?)",
+                        (cid, owner_id))
+            conn.commit()
+            return cid
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def channels(self):
         return self.run("""SELECT c.id,c.name,c.owner_id,u.username AS owner_username
-                           FROM channels c JOIN users u ON u.id=c.owner_id ORDER BY c.name""", fetch="all")
+                           FROM dbo.channels AS c
+                           INNER JOIN dbo.users AS u ON u.id=c.owner_id
+                           ORDER BY c.name""", fetch="all")
 
     def join_channel(self, channel_id, user_id):
-        self.run("INSERT IGNORE INTO channel_members(channel_id,user_id) VALUES(%s,%s)",
-                 (channel_id,user_id))
+        self.run("""IF NOT EXISTS (SELECT 1 FROM dbo.channel_members WHERE channel_id=? AND user_id=?)
+                    INSERT INTO dbo.channel_members(channel_id,user_id) VALUES(?,?)""",
+                 (channel_id, user_id, channel_id, user_id))
 
     def is_channel_member(self, channel_id, user_id):
-        return bool(self.run("SELECT 1 AS ok FROM channel_members WHERE channel_id=%s AND user_id=%s",
-                             (channel_id,user_id),"one"))
+        return bool(self.run(
+            "SELECT 1 AS ok FROM dbo.channel_members WHERE channel_id=? AND user_id=?",
+            (channel_id, user_id), "one"))
 
     def channel_members(self, channel_id):
-        return self.run("SELECT user_id FROM channel_members WHERE channel_id=%s", (channel_id,), "all")
+        return self.run("SELECT user_id FROM dbo.channel_members WHERE channel_id=?",
+                        (channel_id,), "all")

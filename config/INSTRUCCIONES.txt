@@ -2,4 +2,6 @@
 2) server.env se usa exclusivamente en el equipo servidor.
 3) client.env se usa en cada computadora cliente.
 4) No compartas ni subas los archivos .env reales.
-5) El puerto inicial del servidor es TCP 3031 (rango asignado 3031-3040).
+5) El servidor de aplicación escucha por defecto en TCP 3031 (rango asignado 3031-3040).
+6) La base de datos de esta versión es Microsoft SQL Server 2022 por TCP 1433.
+7) En Linux instala el controlador Microsoft ODBC Driver 18 for SQL Server además de pyodbc.
