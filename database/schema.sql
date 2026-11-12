@@ -111,4 +111,5 @@ BEGIN
     );
     CREATE INDEX IX_remembered_devices_user ON dbo.remembered_devices(user_id);
 END;
-GO
+
+SELECT * FROM dbo.users;
