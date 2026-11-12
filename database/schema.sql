@@ -1,46 +1,15 @@
 USE master;
-GO
+ALTER DATABASE wasap_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
 
-CREATE LOGIN wasap_app
-WITH
-    PASSWORD = 'Roma*5485',
-    CHECK_POLICY = ON,
-    DEFAULT_DATABASE = wasap_db;
-GO
+DROP DATABASE wasap_db;
 
-USE wasap_db;
+USE master;
 GO
-
-IF NOT EXISTS (
-    SELECT 1
-    FROM sys.database_principals
-    WHERE name = 'wasap_app'
-)
-BEGIN
-    CREATE USER wasap_app
-    FOR LOGIN wasap_app;
-END
-ELSE
-BEGIN
-    ALTER USER wasap_app
-    WITH LOGIN = wasap_app;
-END;
-GO
-
-ALTER ROLE db_datareader
-ADD MEMBER wasap_app;
-GO
-
-ALTER ROLE db_datawriter
-ADD MEMBER wasap_app;
-GO
-
 IF DB_ID(N'wasap_db') IS NULL
 BEGIN
     CREATE DATABASE wasap_db;
 END;
 GO
-
 USE wasap_db;
 GO
 
@@ -52,10 +21,14 @@ BEGIN
         password_hash NVARCHAR(255) NOT NULL,
         display_name NVARCHAR(64) NOT NULL,
         avatar_path NVARCHAR(512) NULL,
+        avatar_data NVARCHAR(MAX) NULL,
         created_at DATETIME2(0) NOT NULL CONSTRAINT DF_users_created_at DEFAULT SYSUTCDATETIME(),
         CONSTRAINT UQ_users_username UNIQUE(username)
     );
 END;
+GO
+IF COL_LENGTH('dbo.users','avatar_data') IS NULL
+    ALTER TABLE dbo.users ADD avatar_data NVARCHAR(MAX) NULL;
 GO
 
 IF OBJECT_ID(N'dbo.groups_chat', N'U') IS NULL
@@ -69,7 +42,6 @@ BEGIN
     );
 END;
 GO
-
 IF OBJECT_ID(N'dbo.group_members', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.group_members (
@@ -82,7 +54,6 @@ BEGIN
     );
 END;
 GO
-
 IF OBJECT_ID(N'dbo.channels', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.channels (
@@ -95,7 +66,6 @@ BEGIN
     );
 END;
 GO
-
 IF OBJECT_ID(N'dbo.channel_members', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.channel_members (
@@ -108,7 +78,6 @@ BEGIN
     );
 END;
 GO
-
 IF OBJECT_ID(N'dbo.messages', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.messages (
@@ -125,5 +94,21 @@ BEGIN
     );
     CREATE INDEX IX_messages_scope_target_created ON dbo.messages(scope,target_id,created_at,id);
     CREATE INDEX IX_messages_direct_pair ON dbo.messages(scope,sender_id,recipient_id,created_at,id);
+END;
+GO
+IF OBJECT_ID(N'dbo.remembered_devices', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.remembered_devices (
+        id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_remembered_devices PRIMARY KEY,
+        user_id BIGINT NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        device_name NVARCHAR(100) NOT NULL CONSTRAINT DF_remembered_devices_name DEFAULT N'Dispositivo',
+        created_at DATETIME2(0) NOT NULL CONSTRAINT DF_remembered_devices_created DEFAULT SYSUTCDATETIME(),
+        last_used_at DATETIME2(0) NOT NULL CONSTRAINT DF_remembered_devices_used DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT UQ_remembered_devices_token UNIQUE(token_hash),
+        CONSTRAINT FK_remembered_devices_user FOREIGN KEY(user_id)
+            REFERENCES dbo.users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IX_remembered_devices_user ON dbo.remembered_devices(user_id);
 END;
 GO

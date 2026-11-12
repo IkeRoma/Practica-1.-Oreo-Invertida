@@ -40,13 +40,16 @@ class Handler:
                 password = str(msg.get("password", ""))
                 display = str(msg.get("display_name", "")).strip() or username
                 avatar = str(msg.get("avatar_path", "")).strip() or None
+                avatar_data = msg.get("avatar_data")
+                if avatar_data is not None and len(str(avatar_data)) > 1_500_000:
+                    raise ValueError("La fotografía supera el tamaño permitido (aprox. 1 MB).")
                 if not (3 <= len(username) <= 32) or not username.replace("_", "").isalnum():
                     raise ValueError("El usuario debe tener 3–32 caracteres alfanuméricos o guion bajo.")
-                if len(password) < 8:
-                    raise ValueError("La contraseña debe tener al menos 8 caracteres.")
+                if len(password) < 10 or not any(c.isupper() for c in password) or not any(c.islower() for c in password) or not any(c.isdigit() for c in password) or not any(not c.isalnum() for c in password):
+                    raise ValueError("La contraseña debe tener 10 caracteres e incluir mayúscula, minúscula, número y símbolo.")
                 if self.db.user_by_username(username):
                     raise ValueError("Ese nombre de usuario ya está registrado.")
-                self.db.create_user(username, hash_password(password), display[:64], avatar)
+                self.db.create_user(username, hash_password(password), display[:64], avatar, avatar_data)
                 self._reply(conn, rid, True, {"message": "Cuenta creada. Ya puedes iniciar sesión."})
                 return
 
@@ -58,15 +61,72 @@ class Handler:
                 token = secrets.token_urlsafe(32)
                 conn.auth_token = token
                 self.sessions[token] = row["id"]
+                device_token = str(msg.get("device_token", "")).strip()
+                if device_token:
+                    self.db.remember_device(row["id"], hashlib.sha256(device_token.encode()).hexdigest(),
+                                            str(msg.get("device_name", "Dispositivo"))[:100])
                 self.online.setdefault(row["id"], set()).add(conn)
                 self._reply(conn, rid, True, {"token": token, "user": {
                     "id": row["id"], "username": row["username"],
-                    "display_name": row["display_name"], "avatar_path": row["avatar_path"]}})
+                    "display_name": row["display_name"], "avatar_path": row.get("avatar_path"),
+                    "avatar_data": row.get("avatar_data")}})
                 self.broadcast({"event": "presence", "user_id": row["id"], "online": True})
+                return
+
+            if action == "password_change":
+                username = str(msg.get("username", "")).strip().lower()
+                current = str(msg.get("current_password", ""))
+                new_password = str(msg.get("new_password", ""))
+                row = self.db.user_by_username(username)
+                if not row or not verify_password(current, row["password_hash"]):
+                    raise ValueError("Usuario o contraseña actual incorrectos.")
+                if len(new_password) < 10 or not any(c.isupper() for c in new_password) or not any(c.islower() for c in new_password) or not any(c.isdigit() for c in new_password) or not any(not c.isalnum() for c in new_password):
+                    raise ValueError("La nueva contraseña debe tener 10 caracteres e incluir mayúscula, minúscula, número y símbolo.")
+                self.db.update_password(row["id"], hash_password(new_password))
+                self.db.revoke_user_devices(row["id"])
+                self._reply(conn, rid, True, {"message": "Contraseña actualizada. Inicia sesión nuevamente."})
+                return
+
+            if action == "device_resume":
+                device_token = str(msg.get("device_token", "")).strip()
+                if not device_token:
+                    raise ValueError("No hay un dispositivo recordado.")
+                token_hash = hashlib.sha256(device_token.encode()).hexdigest()
+                row = self.db.user_by_device_token(token_hash)
+                if not row:
+                    raise ValueError("La sesión guardada ya no es válida.")
+                token = secrets.token_urlsafe(32)
+                conn.auth_token = token
+                self.sessions[token] = row["id"]
+                self.online.setdefault(row["id"], set()).add(conn)
+                self.db.touch_device(token_hash)
+                self._reply(conn, rid, True, {"token": token, "user": {
+                    "id": row["id"], "username": row["username"],
+                    "display_name": row["display_name"], "avatar_path": row.get("avatar_path"),
+                    "avatar_data": row.get("avatar_data")}})
+                self.broadcast({"event": "presence", "user_id": row["id"], "online": True})
+                return
+
+            if action == "device_revoke":
+                device_token = str(msg.get("device_token", "")).strip()
+                if device_token:
+                    self.db.revoke_device(hashlib.sha256(device_token.encode()).hexdigest())
+                self._reply(conn, rid, True, {"revoked": True})
                 return
 
             user = self._user(conn)
             uid = user["id"]
+
+            if action == "profile_update":
+                display = str(msg.get("display_name", "")).strip()
+                if not display or len(display) > 64:
+                    raise ValueError("El nombre visible debe contener entre 1 y 64 caracteres.")
+                avatar_data = msg.get("avatar_data")
+                if avatar_data is not None and len(str(avatar_data)) > 1_500_000:
+                    raise ValueError("La fotografía supera el tamaño permitido (aprox. 1 MB).")
+                self.db.update_profile(uid, display, avatar_data)
+                self._reply(conn, rid, True, {"display_name": display, "avatar_data": avatar_data})
+                return
 
             if action == "users":
                 data = self.db.users()
