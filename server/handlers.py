@@ -1,6 +1,9 @@
 """Lógica de negocio del servidor Wasap; independiente del motor SQL."""
 import secrets
+import hashlib
+
 from auth import hash_password, verify_password
+
 
 
 class Handler:
