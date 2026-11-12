@@ -1,11 +1,38 @@
 USE master;
 GO
 
--- Cambia la base de datos a modo de acceso único y desconecta a los usuarios de inmediato
-ALTER DATABASE wasap_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+CREATE LOGIN wasap_app
+WITH
+    PASSWORD = 'Roma*5485',
+    CHECK_POLICY = ON,
+    DEFAULT_DATABASE = wasap_db;
 GO
 
-DROP DATABASE wasap_db;
+USE wasap_db;
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.database_principals
+    WHERE name = 'wasap_app'
+)
+BEGIN
+    CREATE USER wasap_app
+    FOR LOGIN wasap_app;
+END
+ELSE
+BEGIN
+    ALTER USER wasap_app
+    WITH LOGIN = wasap_app;
+END;
+GO
+
+ALTER ROLE db_datareader
+ADD MEMBER wasap_app;
+GO
+
+ALTER ROLE db_datawriter
+ADD MEMBER wasap_app;
 GO
 
 IF DB_ID(N'wasap_db') IS NULL
