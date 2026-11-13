@@ -1,13 +1,49 @@
 import base64, os, secrets, re
 from datetime import datetime, timezone
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QSize, QThread, QPoint
-from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QTextCursor
+from PySide6.QtCore import (
+    Qt,
+    QTimer,
+    QThread,
+    QPropertyAnimation,
+    QEasingCurve,
+    QPoint,
+    Signal,
+    Slot
+)
+
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QDialog, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QListWidget, QListWidgetItem, QTextEdit, QMessageBox,
-    QInputDialog, QFileDialog, QFrame, QCheckBox, QProgressDialog, QDialogButtonBox,
-    QFormLayout, QSplitter, QToolButton, QGraphicsOpacityEffect, QScrollArea,
-    QTreeWidget, QTreeWidgetItem, QTextBrowser, QTimer
+    QApplication,
+    QTextBrowser,
+    QWidget,
+    QMainWindow,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QListWidget,
+    QListWidgetItem,
+    QTextEdit,
+    QMessageBox,
+    QInputDialog,
+    QFileDialog,
+    QStackedWidget,
+    QDialog,
+    QCheckBox,
+    QFrame,
+    QGraphicsOpacityEffect,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QDialogButtonBox,
+    QProgressDialog
+)
+
+from PySide6.QtGui import (
+    QColor,
+    QPen,
+    QTextCursor,
+    QPixmap,
+    QPainter
 )
 
 STYLE = """
