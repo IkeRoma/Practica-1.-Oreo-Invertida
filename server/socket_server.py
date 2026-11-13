@@ -16,6 +16,17 @@ class ClientConnection:
         with self.send_lock:
             self.sock.sendall(raw)
 
+    def close(self):
+        self.alive = False
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
     def run(self):
         buffer=b""
         try:
@@ -23,8 +34,8 @@ class ClientConnection:
                 chunk=self.sock.recv(4096)
                 if not chunk: break
                 buffer += chunk
-                if len(buffer)>1_000_000:
-                    raise ValueError("Paquete demasiado grande.")
+                if len(buffer)>2_000_000:
+                    raise ValueError("Paquete demasiado grande (máximo 2 MB).")
                 while b"\n" in buffer:
                     line,buffer=buffer.split(b"\n",1)
                     if not line.strip(): continue

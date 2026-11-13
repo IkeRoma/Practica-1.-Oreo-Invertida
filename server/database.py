@@ -64,19 +64,19 @@ class Database:
 
     def user_by_username(self, username):
         return self.run(
-            "SELECT id, username, password_hash, display_name, avatar_path "
+            "SELECT id, username, password_hash, display_name, avatar_path, avatar_data "
             "FROM dbo.users WHERE username = ?", (username,), "one")
 
     def user_by_id(self, user_id):
         return self.run(
-            "SELECT id, username, display_name, avatar_path FROM dbo.users WHERE id = ?",
+            "SELECT id, username, display_name, avatar_path, avatar_data FROM dbo.users WHERE id = ?",
             (user_id,), "one")
 
-    def create_user(self, username, password_hash, display_name, avatar_path=None):
+    def create_user(self, username, password_hash, display_name, avatar_path=None, avatar_data=None):
         return self.run(
-            "INSERT INTO dbo.users(username,password_hash,display_name,avatar_path) "
-            "OUTPUT INSERTED.id VALUES(?,?,?,?)",
-            (username, password_hash, display_name, avatar_path), "lastrowid")
+            "INSERT INTO dbo.users(username,password_hash,display_name,avatar_path,avatar_data) "
+            "OUTPUT INSERTED.id VALUES(?,?,?,?,?)",
+            (username, password_hash, display_name, avatar_path, avatar_data), "lastrowid")
 
     def users(self):
         return self.run(
@@ -133,10 +133,6 @@ class Database:
             raise
         finally:
             conn.close()
-
-    def group_name(self, group_id):
-        row = self.run("SELECT name FROM dbo.groups_chat WHERE id=?", (group_id,), "one")
-        return row["name"] if row else "grupo"
 
     def groups_for(self, user_id):
         return self.run("""SELECT g.id,g.name,g.owner_id FROM dbo.groups_chat AS g
@@ -198,3 +194,49 @@ class Database:
     def channel_members(self, channel_id):
         return self.run("SELECT user_id FROM dbo.channel_members WHERE channel_id=?",
                         (channel_id,), "all")
+
+
+    def update_profile(self, user_id, display_name, avatar_data=None):
+        if avatar_data is None:
+            self.run("UPDATE dbo.users SET display_name=? WHERE id=?",
+                     (display_name, user_id))
+        else:
+            self.run("UPDATE dbo.users SET display_name=?, avatar_data=? WHERE id=?",
+                     (display_name, avatar_data, user_id))
+
+    def update_password(self, user_id, password_hash):
+        self.run("UPDATE dbo.users SET password_hash=? WHERE id=?",
+                 (password_hash, user_id))
+
+    def remember_device(self, user_id, token_hash, device_name):
+        self.run("""IF EXISTS (SELECT 1 FROM dbo.remembered_devices WHERE token_hash=?)
+                    UPDATE dbo.remembered_devices
+                    SET user_id=?, device_name=?, last_used_at=SYSUTCDATETIME()
+                    WHERE token_hash=?
+                    ELSE
+                    INSERT INTO dbo.remembered_devices(user_id,token_hash,device_name)
+                    VALUES(?,?,?)""",
+                 (token_hash,user_id,device_name,token_hash,user_id,token_hash,device_name))
+
+    def user_by_device_token(self, token_hash):
+        return self.run("""SELECT u.id,u.username,u.display_name,u.avatar_path,u.avatar_data
+                           FROM dbo.remembered_devices d
+                           INNER JOIN dbo.users u ON u.id=d.user_id
+                           WHERE d.token_hash=?""", (token_hash,), "one")
+
+    def touch_device(self, token_hash):
+        self.run("UPDATE dbo.remembered_devices SET last_used_at=SYSUTCDATETIME() WHERE token_hash=?",
+                 (token_hash,))
+
+    def revoke_device(self, token_hash):
+        self.run("DELETE FROM dbo.remembered_devices WHERE token_hash=?", (token_hash,))
+
+    def revoke_user_devices(self, user_id):
+        self.run("DELETE FROM dbo.remembered_devices WHERE user_id=?", (user_id,))
+
+    def revoke_devices_for_users(self, user_ids):
+        ids = [int(user_id) for user_id in user_ids]
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        self.run(f"DELETE FROM dbo.remembered_devices WHERE user_id IN ({placeholders})", tuple(ids))
