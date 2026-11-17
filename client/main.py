@@ -88,17 +88,31 @@ class WasapApplication:
         slide_in(self.login)
         return True
 
+    
     def show_chat(self, data):
-        if self.login:
-            self.login.close()
-            self.login = None
         self.device_token = data.get("device_token", "")
-        self.chat = ChatWindow(self.network, data["user"], self.device_token)
+
+        # Primero construir la ventana principal.
+        self.chat = ChatWindow(
+            self.network,
+            data["user"],
+            self.device_token
+        )
+
+        # Conectar los eventos del chat.
         self.network.event_received.connect(self.chat.handle_event)
         self.chat.forced_logout.connect(self.on_forced_logout)
         self.chat.normal_logout.connect(self.on_normal_logout)
+
+        # Mostrar la ventana principal antes de cerrar el login.
         self.chat.show()
         slide_in(self.chat)
+
+        # Ahora cerrar la ventana de inicio de sesión.
+        if self.login:
+            self.login.close()
+            self.login = None
+
 
     def on_forced_logout(self, reason):
         QMessageBox.warning(None, "Sesión cerrada", reason + "\n\nVuelve a iniciar sesión para continuar.")
