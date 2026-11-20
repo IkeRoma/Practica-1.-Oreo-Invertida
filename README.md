@@ -1,181 +1,476 @@
-# Wasap V4 — Cliente de escritorio y servidor TCP
+# WASAP — Cliente de Mensajería
 
-Wasap V4 integra **las dos entregas de mejoras**: conserva las funciones incorporadas en V3 (registro, validación de contraseñas, perfiles, fotografías y dispositivos recordados) y añade el rediseño de mensajería, navegación, información de contactos, agrupación de mensajes, animación Oreo y cierre de sesiones de grupo.
+## 1. Descripción del proyecto
 
-La arquitectura se mantiene: **Python + PySide6 (cliente), TCP/JSON (servidor), Microsoft SQL Server 2022 (persistencia)**. El cliente no se conecta directamente a SQL Server; se comunica con el servidor Wasap por TCP `3031`.
+Wasap es una aplicación de mensajería instantánea desarrollada en Python, utilizando PySide6 para su interfaz gráfica y sockets TCP para la comunicación.
 
-## Funciones incluidas de la primera modificación (V3)
+El cliente permite utilizar las funcionalidades de mensajería disponibles en la aplicación, incluyendo:
 
-- Ventanas separadas para iniciar sesión, registrar una cuenta y cambiar contraseña.
-- Validación de contraseñas: al menos 10 caracteres, mayúscula, minúscula, número y símbolo.
-- Perfil editable: nombre visible y fotografía.
-- Selección de fotografía al registrarse y edición posterior.
-- Token aleatorio por dispositivo y opción «Recordar este dispositivo» usando el almacén seguro del sistema operativo (`keyring`); no se almacena la contraseña.
+- Inicio de sesión y registro de usuarios.
+- Administración del perfil personal.
+- Cambio de contraseña.
+- Fotografías de perfil.
+- Conversaciones personales.
+- Conversaciones grupales.
+- Canales.
 - Búsqueda de contactos.
-- Compatibilidad del código fuente con Windows, GNU/Linux y macOS.
+- Visualización de información de usuarios.
+- Notificaciones y visualización de mensajes.
+- Administración de dispositivos recordados.
+- Cierre de sesión.
 
-## Funciones nuevas integradas en V4
+Este documento contiene exclusivamente las instrucciones de instalación, configuración, ejecución y comprobación del cliente.
 
-1. Actualización inmediata de la vista de conversación al seleccionar un chat.
-2. Botón `+` dentro de los grupos para agregar integrantes; abrir un grupo ya no pregunta si se desea agregar a alguien.
-3. Panel lateral persistente con Chat general, mensajes directos, grupos y canales. Al seleccionar un elemento, la conversación aparece en el panel central.
-4. Información del contacto desde el encabezado de un chat directo.
-5. Nombres de remitentes seleccionables en mensajes grupales para consultar su contacto.
-6. Hora de cada mensaje.
-7. Agrupación de mensajes consecutivos del mismo remitente.
-8. Scripts de empaquetado con PyInstaller para generar una aplicación de escritorio en el sistema operativo donde se compile.
-9. Tema oscuro inspirado en Discord; «WASAP» y «Mensajería sencilla» centrados.
-10. Botón **«sálganse, quiero estar solo»** en grupos. Tras confirmación, el servidor cierra todas las conexiones activas de todos los integrantes del grupo, invalida sus dispositivos recordados y los devuelve al inicio de sesión. No elimina cuentas, miembros, grupo ni historial.
-11. Animación de carga con una galleta tipo Oreo giratoria en inicio y cierre de sesión.
+---
 
-## Estructura
+## 2. Requisitos del cliente
 
-```text
-client/                 Cliente PySide6
-server/                 Servidor TCP y lógica de negocio
-config/                 Plantillas de configuración
- database/              Esquema y migración SQL Server
-build_windows.bat       Empaquetado en Windows
-build_unix.sh           Empaquetado en Linux/macOS
+Para ejecutar Wasap se requiere:
+
+- Python 3.10 o superior.
+- pip (administrador de paquetes de Python).
+- PySide6.
+- Un sistema operativo compatible: Windows, GNU/Linux o macOS.
+- Conexión a Internet para instalar las dependencias.
+- Acceso de red al servicio Wasap.
+
+### 2.1 Windows
+
+Descarga Python desde:
+
+https://www.python.org/downloads/windows/
+
+También puedes instalarlo mediante Windows Package Manager:
+
+```powershell
+winget install Python.Python.3.12
 ```
 
-## 1. Actualización del servidor EC2
+Comprueba la instalación:
 
-Haz una copia de seguridad de la carpeta del servidor y conserva tu `config/server.env` actual. No reemplaces ese archivo con una plantilla: contiene los datos de conexión de tu instalación.
+```powershell
+py --version
+py -m pip --version
+```
 
-Copia al servidor estos archivos de la versión V4:
+### 2.2 GNU/Linux (Ubuntu/Debian)
 
-- `server/handlers.py`
-- `server/database.py`
-- `server/socket_server.py`
-- `server/auth.py` (se conserva la implementación PBKDF2 de V3)
-- `server/main.py` (puedes conservar el actual si tiene la misma configuración de entorno)
-
-La mejora de cierre de sesiones se ejecuta en el servidor y no requiere borrar ni recrear tablas. La consulta de historial ahora devuelve `sender_id`, por lo que el cliente puede agrupar y enlazar correctamente los mensajes.
-
-En EC2, desde el directorio del servidor y con el entorno virtual activado:
+Actualiza los repositorios:
 
 ```bash
-python -m py_compile handlers.py database.py socket_server.py main.py
-python main.py
+sudo apt update
 ```
 
-Si el servidor se ejecuta como servicio `systemd`, reinicia el servicio con el nombre que tengas configurado. No abras el puerto SQL `1433` a los clientes: solamente el servidor Wasap debe comunicarse con SQL Server.
+Instala Python 3, pip y las herramientas para crear entornos virtuales:
 
-### Migración SQL necesaria si aún no instalaste V3
+```bash
+sudo apt install -y python3 python3-pip python3-venv
+```
 
-Si ya ejecutaste `database/migrations/003_profile_and_remembered_devices.sql` para V3, **no vuelvas a ejecutarla**. Si todavía no la ejecutaste, abre el script en SSMS y ejecútalo sobre `wasap_db`. Añade `avatar_data` y la tabla `remembered_devices`; no elimina mensajes, cuentas, grupos ni canales.
+Instala las bibliotecas gráficas necesarias para PySide6:
 
-V4 no necesita una migración adicional para la desconexión grupal.
+```bash
+sudo apt install -y libegl1 libgl1 libxkbcommon-x11-0 \
+libxcb-cursor0 libdbus-1-3
+```
 
-## 2. Configurar el cliente
+Comprueba la instalación:
 
-Copia el archivo de ejemplo y edita el host del servidor Wasap (no el endpoint de SQL Server).
+```bash
+python3 --version
+python3 -m pip --version
+```
 
-### Windows — PowerShell
+### 2.3 macOS
+
+Se recomienda instalar Python mediante Homebrew.
+
+Si todavía no tienes Homebrew, consulta:
+
+https://brew.sh/
+
+Instala Python:
+
+```bash
+brew install python@3.12
+```
+
+Comprueba la instalación:
+
+```bash
+python3 --version
+python3 -m pip --version
+```
+
+---
+
+## 3. Obtener y preparar el proyecto
+
+Descarga o clona el repositorio de Wasap.
+
+Si utilizas Git:
+
+```bash
+git clone URL_DEL_REPOSITORIO
+```
+
+Accede a la carpeta del proyecto:
+
+```bash
+cd Practica-1.-Oreo-Invertida
+```
+
+La estructura esperada del proyecto incluye:
+
+```text
+Practica-1.-Oreo-Invertida/
+│
+├── client/
+│   ├── main.py
+│   ├── ui.py
+│   ├── network.py
+│   └── ...
+│
+├── config/
+│   └── client.env.example
+│
+├── requirements-client.txt
+│
+└── README.md
+```
+
+Los módulos adicionales y recursos gráficos deben conservarse dentro de sus respectivas carpetas.
+
+---
+
+## 4. Configurar el cliente
+
+### 4.1 Crear el archivo de configuración
+
+Copia el archivo de ejemplo y crea el archivo de configuración personal.
+
+**Windows — PowerShell**
 
 ```powershell
 Copy-Item config\client.env.example config\client.env
 notepad config\client.env
 ```
 
-### GNU/Linux / macOS
+**GNU/Linux / macOS**
 
 ```bash
 cp config/client.env.example config/client.env
 nano config/client.env
 ```
 
-Contenido:
+### 4.2 Configurar la conexión
+
+Edita los valores correspondientes:
 
 ```env
-SERVER_HOST=IP_PUBLICA_O_DNS_DEL_SERVIDOR_WASAP
+SERVER_HOST=IP_PUBLICA_O_DNS_DEL_SERVICIO_WASAP
 SERVER_PORT=3031
 ```
 
-No compartas `config/client.env` si contiene datos internos de tu infraestructura.
+- `SERVER_HOST`: dirección IP o nombre DNS del servicio Wasap.
+- `SERVER_PORT`: puerto TCP utilizado por el cliente para comunicarse.
 
-## 3. Ejecutar desde Python
+Guarda los cambios.
 
-Requiere Python 3.10 o superior.
+**Importante:** no compartas `config/client.env` si contiene datos internos de tu infraestructura.
 
-### Windows
+---
+
+## 5. Crear el entorno virtual
+
+Se recomienda utilizar un entorno virtual para mantener aisladas las dependencias del proyecto.
+
+### 5.1 Windows
+
+Desde la carpeta raíz:
 
 ```powershell
 py -3 -m venv .venv
-.venv\Scripts\Activate.ps1
+```
+
+### 5.2 GNU/Linux
+
+```bash
+python3 -m venv .venv
+```
+
+### 5.3 macOS
+
+```bash
+python3 -m venv .venv
+```
+
+---
+
+## 6. Activar el entorno virtual
+
+Antes de instalar las dependencias o ejecutar Wasap, activa el entorno virtual.
+
+### 6.1 Windows — PowerShell
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Si PowerShell bloquea la ejecución del script:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Después:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+### 6.2 Windows — CMD
+
+```cmd
+.venv\Scripts\activate.bat
+```
+
+### 6.3 GNU/Linux
+
+```bash
+source .venv/bin/activate
+```
+
+### 6.4 macOS
+
+```bash
+source .venv/bin/activate
+```
+
+Cuando el entorno virtual esté activo, aparecerá `(.venv)` al principio de la terminal.
+
+---
+
+## 7. Instalar las dependencias
+
+Con el entorno virtual activado, actualiza pip:
+
+```bash
 python -m pip install --upgrade pip
+```
+
+Instala PySide6:
+
+```bash
+python -m pip install PySide6
+```
+
+Instala las dependencias adicionales del cliente:
+
+```bash
 python -m pip install -r requirements-client.txt
+```
+
+Si PySide6 ya está incluido en `requirements-client.txt`, pip comprobará la versión instalada y resolverá las dependencias correspondientes.
+
+### 7.1 Comprobar PySide6
+
+Ejecuta:
+
+```bash
+python -c "from PySide6.QtWidgets import QApplication; print('PySide6 instalado correctamente')"
+```
+
+Si aparece el mensaje de confirmación, la biblioteca gráfica está disponible.
+
+---
+
+## 8. Ejecutar el cliente
+
+Con el entorno virtual activado y la configuración lista, ejecuta Wasap desde la carpeta raíz.
+
+### 8.1 Windows
+
+```powershell
 python client\main.py
 ```
 
-### GNU/Linux
-
-En Ubuntu/Debian, instala las dependencias gráficas y el llavero:
+### 8.2 GNU/Linux
 
 ```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip libegl1 libgl1 \
-  libxkbcommon-x11-0 libxcb-cursor0 libdbus-1-3 gnome-keyring
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-client.txt
 python3 client/main.py
 ```
 
-### macOS
+### 8.3 macOS
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-client.txt
 python3 client/main.py
 ```
 
-## 4. Empaquetar como aplicación
+La aplicación abrirá la ventana de inicio de sesión.
 
-PyInstaller debe ejecutarse **en el sistema operativo de destino**. Un ejecutable de Windows se compila en Windows; para macOS y Linux, compila en cada plataforma correspondiente.
+Desde ella podrás acceder a las funcionalidades disponibles de Wasap.
 
-### Windows
+---
 
-Ejecuta `build_windows.bat`. El resultado será `dist/Wasap/Wasap.exe` junto con sus dependencias. Copia la carpeta completa `Wasap`, no solo el `.exe`. Crea `dist/Wasap/config/client.env` a partir del ejemplo y configura `SERVER_HOST`.
+## 9. Desactivar el entorno virtual
 
-### Linux / macOS
+Cuando termines de utilizar la aplicación, puedes desactivar el entorno virtual.
 
-```bash
-chmod +x build_unix.sh
-./build_unix.sh
-```
-
-El resultado estará en `dist/Wasap/`. Configura `dist/Wasap/config/client.env` y ejecuta `dist/Wasap/Wasap` (en macOS puede ser necesario distribuirlo como `.app` mediante un empaquetador específico si se requiere integración nativa de Finder).
-
-## 5. Pruebas locales
-
-Desde la raíz del proyecto:
+En cualquiera de las plataformas ejecuta:
 
 ```bash
-python -m py_compile client/main.py client/network.py client/ui.py server/main.py server/handlers.py server/database.py server/socket_server.py
-python -m unittest discover -s . -p 'tests_group_logout.py' -v
+deactivate
 ```
 
-Las pruebas unitarias de cierre grupal usan conexiones y base de datos simuladas. No sustituyen una prueba de integración con tu instancia real de SQL Server y EC2.
+Para volver a ejecutar Wasap posteriormente, no necesitas crear nuevamente el entorno virtual. Solamente debes activarlo con el comando correspondiente a tu sistema operativo y ejecutar el cliente.
 
-## 6. Seguridad y operación
+---
 
-- No incluyas `config/server.env` ni `config/client.env` con secretos dentro de repositorios o ZIP compartidos.
-- Usa contraseñas fuertes para SQL Server y rota cualquier credencial que se haya compartido anteriormente en archivos de configuración.
-- El botón de desconexión grupal afecta a todos los integrantes y todos sus dispositivos recordados; exige confirmación y no elimina datos.
-- El token de dispositivo se almacena en el almacén seguro del sistema operativo. En Linux, `keyring` requiere un servicio Secret Service activo.
-- El cliente necesita acceso TCP al puerto `3031` del servidor Wasap. No necesita ODBC ni acceso directo al puerto `1433`.
+## 10. Pruebas y comprobaciones del cliente
 
-## 7. Solución de problemas
+Las siguientes comprobaciones permiten identificar errores de sintaxis, importaciones y nombres no definidos.
 
-**No conecta:** verifica `SERVER_HOST`, `SERVER_PORT`, el estado del servidor y las reglas del firewall/Security Group para TCP `3031`.
+Se recomienda ejecutarlas desde la raíz del proyecto y con el entorno virtual activado.
 
-**No recuerda el dispositivo:** comprueba el llavero del sistema operativo. Puedes seguir iniciando sesión sin marcar la casilla.
+### 10.1 Comprobar la sintaxis
 
-**La ventana no abre:** ejecuta temporalmente desde una terminal para ver el error, reinstala `requirements-client.txt` y comprueba las bibliotecas gráficas del sistema.
+```bash
+python -m py_compile client/main.py client/network.py client/ui.py
+```
 
-**Error de SQL Server:** el cliente no se conecta a SQL. Revisa `config/server.env`, ODBC Driver 18, el puerto `1433`, permisos del login y disponibilidad de `wasap_db` desde la máquina EC2.
+Si no aparecen errores, los módulos indicados superaron la comprobación de sintaxis.
+
+### 10.2 Instalar Pyflakes
+
+```bash
+python -m pip install pyflakes
+```
+
+### 10.3 Analizar el código del cliente
+
+```bash
+python -m pyflakes client/
+```
+
+Esta herramienta permite detectar:
+
+- Nombres no definidos.
+- Variables sin utilizar.
+- Importaciones innecesarias.
+- Otros problemas estáticos del código.
+
+### 10.4 Comprobar las importaciones de PySide6
+
+```bash
+python -c "from PySide6.QtCore import QThread, QTimer; from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QTextCursor; from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QDialogButtonBox, QTextBrowser, QTreeWidget, QTreeWidgetItem; print('Dependencias gráficas verificadas')"
+```
+
+Estas comprobaciones no sustituyen las pruebas funcionales de inicio de sesión, mensajería, contactos, grupos y canales.
+
+---
+
+## 11. Seguridad
+
+- No incluyas archivos de configuración con información sensible dentro de repositorios o paquetes compartidos.
+- No almacenes contraseñas directamente en el código fuente.
+- Protege los tokens de autenticación y los identificadores de dispositivo.
+- Utiliza el almacén seguro de credenciales del sistema operativo cuando esté disponible.
+- En GNU/Linux, `keyring` puede requerir un servicio Secret Service activo.
+- No compartas fotografías o información personal de otros usuarios sin su autorización.
+
+---
+
+## 12. Solución de problemas
+
+### 12.1 Python no se reconoce como comando
+
+Comprueba que Python está instalado y agregado a la variable de entorno `PATH`.
+
+En Windows:
+
+```powershell
+py --version
+```
+
+En GNU/Linux y macOS:
+
+```bash
+python3 --version
+```
+
+### 12.2 Error al activar el entorno virtual en PowerShell
+
+Ejecuta:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Después vuelve a activar el entorno:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+### 12.3 Error al importar PySide6
+
+Con el entorno virtual activado:
+
+```bash
+python -m pip install --upgrade PySide6
+```
+
+También puedes reinstalar las dependencias:
+
+```bash
+python -m pip install -r requirements-client.txt
+```
+
+### 12.4 La ventana no abre
+
+Ejecuta temporalmente la aplicación desde una terminal:
+
+```bash
+python client/main.py
+```
+
+Esto permitirá visualizar los errores que se produzcan durante la ejecución.
+
+Comprueba las dependencias y las bibliotecas gráficas del sistema operativo.
+
+### 12.5 La aplicación no se conecta
+
+Comprueba:
+
+- Que `SERVER_HOST` tenga la dirección correcta.
+- Que `SERVER_PORT` sea el puerto configurado.
+- Que el servicio Wasap esté disponible.
+- Que exista conectividad de red hacia el puerto TCP 3031.
+- Que no haya reglas de firewall bloqueando la comunicación.
+
+### 12.6 No recuerda el dispositivo
+
+Comprueba que el almacén de credenciales del sistema operativo esté disponible.
+
+También puedes iniciar sesión sin marcar la opción de recordar el dispositivo.
+
+### 12.7 Error al encontrar `client.env`
+
+Comprueba que el archivo exista en:
+
+```text
+config/client.env
+```
+
+Verifica que la aplicación utilice una ruta compatible con la carpeta desde la que se ejecuta.
+
+---
+
+## 13. Finalización
+
+Una vez instaladas las dependencias, configurado el archivo `client.env` y activado el entorno virtual, Wasap estará listo para ejecutarse desde Python.
+
+Para iniciar la aplicación nuevamente, basta con activar el entorno virtual y ejecutar el módulo principal del cliente.
+
+**Wasap — Mensajería sencilla.**
