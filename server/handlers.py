@@ -239,46 +239,74 @@ class Handler:
                 for member in members:
                     member["online"] = bool(self.online.get(member["id"]))
                 self._reply(conn, rid, True, members)
-
             elif action == "group_logout_all":
                 gid = int(msg["group_id"])
+
                 if not self.db.is_group_member(gid, uid):
                     raise ValueError("No perteneces a ese grupo.")
+
                 members = self.db.group_members(gid)
-                # Primero invalida todos los tokens en una sola operación SQL. Si falla,
-                # no comienza una desconexión parcial del grupo.
-                member_ids = [member["id"] for member in members]
-                self.db.revoke_devices_for_users(member_ids)
-                self._reply(conn, rid, True, {"sessions_closing": len(members)})
-                # Desconecta todas las conexiones activas de cada integrante.
-                # No elimina usuarios, membresías ni historial.
+
+                # Excluir al usuario que ejecutó la acción.
+                other_member_ids = [
+                    member["id"]
+                    for member in members
+                    if member["id"] != uid
+                ]
+
+                # Invalidar los dispositivos recordados de los demás.
+                if other_member_ids:
+                    self.db.revoke_devices_for_users(other_member_ids)
+
+                # Confirmar la acción al usuario que la ejecutó.
+                self._reply(conn, rid, True, {
+                    "sessions_closing": len(other_member_ids),
+                    "self_preserved": True
+                })
+
                 offline_ids = []
-                for member in members:
-                    member_id = member["id"]
+
+                # Desconectar únicamente a los demás integrantes.
+                for member_id in other_member_ids:
                     connections = list(self.online.get(member_id, set()))
+
                     for active_conn in connections:
                         try:
-                            active_conn.send({"event": "session_terminated",
-                                "reason": f"La sesión se cerró por una acción en el grupo {gid}.",
-                                "group_id": gid})
+                            active_conn.send({
+                                "event": "session_terminated",
+                                "reason": "Tu sesión fue cerrada por una acción en el grupo.",
+                                "group_id": gid
+                            })
                         except Exception:
                             pass
+
                         active_token = getattr(active_conn, "auth_token", None)
+
                         if active_token:
                             self.sessions.pop(active_token, None)
+
                         active_conn.auth_token = None
+
                         try:
                             active_conn.close()
                         except Exception:
                             pass
+
                     self.online.pop(member_id, None)
+
                     if connections:
                         offline_ids.append(member_id)
-                # Notifica presencia después de desconectar a todos los integrantes,
-                # para que no intenten hacer peticiones durante el cierre grupal.
+
+                # Actualizar la presencia de los desconectados.
                 for member_id in offline_ids:
-                    self.broadcast({"event": "presence", "user_id": member_id, "online": False})
+                    self.broadcast({
+                        "event": "presence",
+                        "user_id": member_id,
+                        "online": False
+                    })
+
                 return
+
 
             elif action == "group_send":
                 gid = int(msg["group_id"])

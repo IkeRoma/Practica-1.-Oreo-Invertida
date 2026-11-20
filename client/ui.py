@@ -611,7 +611,7 @@ class ChatWindow(QMainWindow):
     def close_group_sessions(self):
         if self.scope!="group":return
         answer=QMessageBox.question(self,"Cerrar sesiones del grupo",
-            "Se cerrará la sesión de Wasap de TODOS los integrantes de este grupo, incluido tú. No se eliminarán cuentas, integrantes ni mensajes. ¿Continuar?",
+            "Se cerrará la sesión de Wasap de TODOS los demás integrantes de este grupo. Tu sesión permanecerá activa. No se eliminarán cuentas, integrantes ni mensajes. ¿Continuar?",
             QMessageBox.Yes|QMessageBox.No,QMessageBox.No)
         if answer!=QMessageBox.Yes:return
         try:
